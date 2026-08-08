@@ -109,3 +109,4 @@ arm_common_ss.add(files('boot.c'))
 
 hw_arch += {'arm': arm_ss}
 hw_common_arch += {'arm': arm_common_ss}
+arm_common_ss.add(when: 'CONFIG_QSIM', if_true: files('qsim/qsim_soc.c', 'qsim/osaka.c'))

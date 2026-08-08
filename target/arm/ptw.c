@@ -104,6 +104,9 @@ static bool get_phys_addr_gpc(CPUARMState *env, S1Translate *ptw,
 static int get_S1prot(CPUARMState *env, ARMMMUIdx mmu_idx, bool is_aa64,
                       int user_rw, int prot_rw, int xn, int pxn,
                       ARMSecuritySpace in_pa, ARMSecuritySpace out_pa);
+/* QSIM-OSAKA-XN: used by the PMSAv5 MPU-disabled path (defined further below). */
+static void get_phys_addr_pmsav7_default(CPUARMState *env, ARMMMUIdx mmu_idx,
+                                         int32_t address, uint8_t *prot);
 
 /* This mapping is common between ID_AA64MMFR0.PARANGE and TCR_ELx.{I}PS. */
 static const uint8_t pamax_map[] = {
@@ -2449,6 +2452,25 @@ static bool get_phys_addr_pmsav5(CPUARMState *env,
     if (regime_translation_disabled(env, mmu_idx, ptw->in_space)) {
         /* MPU disabled.  */
         result->f.phys_addr = address;
+        /*
+         * QSIM-OSAKA-XN: ARMv6-M (Cortex-M0) reaches this PMSAv5 path. Stock
+         * QEMU returned blanket RWX here, so an instruction fetch from an
+         * architectural execute-never region (ARM ARM Table B3-1: Peripheral
+         * 0x40000000-0x5fffffff, Device 0xa0000000-0xdfffffff, System
+         * 0xe0000000-0xffffffff incl. AON_SYSRAM 0xF0000000) was wrongly
+         * allowed. Mirror the proven PMSAv7 disabled-path handling: derive the
+         * per-region R/W/X from the M-profile default map and raise a clean
+         * permission fault when the access type isn't permitted (so an XN fetch
+         * HardFaults at translation and never reaches memory). Non-M (R-profile
+         * pre-v7) keeps the original flat RWX.
+         */
+        if (arm_feature(env, ARM_FEATURE_M)) {
+            result->f.prot = 0;
+            get_phys_addr_pmsav7_default(env, mmu_idx, address, &result->f.prot);
+            fi->type = ARMFault_Permission;
+            fi->level = 1;
+            return !(result->f.prot & (1 << access_type));
+        }
         result->f.prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
         return false;
     }
